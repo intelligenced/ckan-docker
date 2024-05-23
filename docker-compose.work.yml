@@ -6,8 +6,32 @@ volumes:
   solr_data:
   pip_cache:
   site_packages:
+  letsencrypt:  # Add a volume for Let's Encrypt certificates
+    driver: local
 
 services:
+
+  traefik:
+    image: traefik:v2.5
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=your-email@example.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt:/letsencrypt"
+    networks:
+      - webnet
+      - ckannet
+  
   ckan:
     build:
       context: ckan/
@@ -19,9 +43,6 @@ services:
       - dbnet
       - solrnet
       - redisnet
-      - traefik-net
-    environment:
-      CKAN_SITE_URL: "http://ckan.localhost/"
     env_file:
       - .env
     depends_on:
@@ -42,8 +63,11 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.ckan.rule=Host(`ckan.localhost`)"
       - "traefik.http.routers.ckan.entrypoints=web"
+      - "traefik.http.routers.ckan-secure.rule=Host(`ckan.localhost`)"
+      - "traefik.http.routers.ckan-secure.entrypoints=websecure"
+      - "traefik.http.routers.ckan-secure.tls.certresolver=myresolver"
       - "traefik.http.services.ckan.loadbalancer.server.port=5000"
-
+    
   datapusher:
     networks:
       - ckannet
@@ -73,7 +97,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
-
+     
   solr:
     networks:
       - solrnet
@@ -91,8 +115,9 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-e", "QUIT"]
-
+    
 networks:
+  webnet:
   ckannet:
   solrnet:
     internal: true
@@ -100,5 +125,3 @@ networks:
     internal: true
   redisnet:
     internal: true
-  traefik-net:
-    external: true
